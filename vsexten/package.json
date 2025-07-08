@@ -54,6 +54,12 @@
         "title": "Settings",
         "category": "DiffUse",
         "icon": "$(gear)"
+      },
+      {
+        "command": "diffuse.clearApiKey",
+        "title": "Clear API Key",
+        "category": "DiffUse",
+        "icon": "$(trash)"
       }
     ],
     "menus": {
@@ -73,6 +79,9 @@
         {
           "command": "diffuse.fullAnalysis",
           "when": "gitOpenRepositoryCount > 0"
+        },
+        {
+          "command": "diffuse.clearApiKey"
         }
       ],
       "scm/title": [

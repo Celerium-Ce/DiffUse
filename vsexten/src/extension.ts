@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import axios from 'axios';
 import { exec } from 'child_process';
 import { promisify } from 'util';
+import { PythonBridge, DiffAnalysisResult } from './pythonBridge';
 
 const execAsync = promisify(exec);
 
@@ -26,10 +27,12 @@ class DiffUseProvider {
     private statusBarItem: vscode.StatusBarItem;
     private outputChannel: vscode.OutputChannel;
     private currentPanel: vscode.WebviewPanel | undefined;
+    private pythonBridge: PythonBridge;
 
     constructor(private context: vscode.ExtensionContext) {
         this.statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
         this.outputChannel = vscode.window.createOutputChannel('DiffUse');
+        this.pythonBridge = new PythonBridge(context);
         this.setupStatusBar();
     }
 
@@ -47,33 +50,28 @@ class DiffUseProvider {
     private async getApiKey(): Promise<string> {
         console.log('🔑 Getting API key...');
         
-        // Try to get from secrets first
-        let apiKey = await this.context.secrets.get('diffuse.openrouterApiKey');
-        console.log('🔒 Secrets API key:', apiKey ? 'Found' : 'Not found');
+        // Try to get from configuration first
+        const config = vscode.workspace.getConfiguration('diffuse');
+        let apiKey = config.get<string>('openrouterApiKey');
+        console.log('⚙️ Config API key:', apiKey ? 'Found' : 'Not found');
         
         if (!apiKey) {
-            // Fallback to configuration
-            const config = vscode.workspace.getConfiguration('diffuse');
-            apiKey = config.get('openrouterApiKey') || '';
-            console.log('⚙️ Config API key:', apiKey ? 'Found' : 'Not found');
+            console.log('💬 Prompting user for API key...');
+            const input = await vscode.window.showInputBox({
+                prompt: 'Enter your OpenRouter API key (get one at openrouter.ai)',
+                password: true,
+                ignoreFocusOut: true,
+                placeHolder: 'sk-or-v1-...'
+            });
             
-            if (!apiKey) {
-                console.log('💬 Prompting user for API key...');
-                const input = await vscode.window.showInputBox({
-                    prompt: 'Enter your OpenRouter API key (get one at openrouter.ai)',
-                    password: true,
-                    ignoreFocusOut: true,
-                    placeHolder: 'sk-or-v1-...'
-                });
-                
-                if (input) {
-                    console.log('✅ User provided API key, storing in secrets...');
-                    await this.context.secrets.store('diffuse.openrouterApiKey', input);
-                    apiKey = input;
-                } else {
-                    console.log('❌ User cancelled API key input');
-                    throw new Error('API key required to use DiffUse');
-                }
+            if (input) {
+                console.log('✅ User provided API key, storing in configuration...');
+                await config.update('openrouterApiKey', input, vscode.ConfigurationTarget.Global);
+                vscode.window.showInformationMessage('API key saved successfully!');
+                apiKey = input;
+            } else {
+                console.log('❌ User cancelled API key input');
+                throw new Error('API key required to use DiffUse');
             }
         }
         
@@ -144,18 +142,36 @@ class DiffUseProvider {
                 cancellable: false
             }, async () => {
                 const diff = await this.getGitDiff();
-                const prompt = 'You are an expert code reviewer. In one clear, human sentence, explain the main purpose of this code change for a pull request summary. Focus on what functionality or behavior is being added, removed, or changed. Avoid repeating code.';
                 
-                const explanation = await this.callOpenRouterAPI(prompt, diff);
-                
-                this.outputChannel.appendLine(`📝 Explanation: ${explanation}`);
-                this.outputChannel.show();
-                
-                vscode.window.showInformationMessage(`📝 ${explanation}`, 'View Details').then(selection => {
-                    if (selection === 'View Details') {
-                        this.showAnalysisPanel({ explanation });
-                    }
-                });
+                try {
+                    // Try using the Python bridge first
+                    this.outputChannel.appendLine('Using Python backend for explanation...');
+                    const explanation = await this.pythonBridge.explainDiff(diff);
+                    
+                    this.outputChannel.appendLine(`📝 Explanation: ${explanation}`);
+                    this.outputChannel.show();
+                    
+                    vscode.window.showInformationMessage(`📝 ${explanation}`, 'View Details').then(selection => {
+                        if (selection === 'View Details') {
+                            this.showAnalysisPanel({ explanation });
+                        }
+                    });
+                } catch (pythonError) {
+                    // Fall back to direct API call if Python bridge fails
+                    this.outputChannel.appendLine(`⚠️ Python backend failed: ${pythonError}, falling back to direct API call`);
+                    
+                    const prompt = 'You are an expert code reviewer. In one clear, human sentence, explain the main purpose of this code change for a pull request summary. Focus on what functionality or behavior is being added, removed, or changed. Avoid repeating code.';
+                    const explanation = await this.callOpenRouterAPI(prompt, diff);
+                    
+                    this.outputChannel.appendLine(`📝 Explanation: ${explanation}`);
+                    this.outputChannel.show();
+                    
+                    vscode.window.showInformationMessage(`📝 ${explanation}`, 'View Details').then(selection => {
+                        if (selection === 'View Details') {
+                            this.showAnalysisPanel({ explanation });
+                        }
+                    });
+                }
             });
         } catch (error) {
             this.handleError(error);
@@ -408,6 +424,16 @@ class DiffUseProvider {
         await vscode.commands.executeCommand('workbench.action.openSettings', 'diffuse');
     }
 
+    async clearApiKey(): Promise<void> {
+        try {
+            const config = vscode.workspace.getConfiguration('diffuse');
+            await config.update('openrouterApiKey', undefined, vscode.ConfigurationTarget.Global);
+            vscode.window.showInformationMessage('API key cleared successfully!');
+        } catch (error) {
+            this.handleError(error);
+        }
+    }
+
     private handleError(error: any) {
         const message = error.message || 'An error occurred';
         this.outputChannel.appendLine(`❌ Error: ${message}`);
@@ -468,6 +494,10 @@ export function activate(context: vscode.ExtensionContext) {
         vscode.commands.registerCommand('diffuse.openSettings', () => {
             console.log('⚙️ Settings command triggered');
             return diffUseProvider.openSettings();
+        }),
+        vscode.commands.registerCommand('diffuse.clearApiKey', () => {
+            console.log('🗑️ Clear API Key command triggered');
+            return diffUseProvider.clearApiKey();
         })
     );
 
