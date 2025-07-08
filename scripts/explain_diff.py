@@ -1,9 +1,13 @@
 # explain_diff.py
-# Uses Salesforce/CodeT5-small to generate plain-English explanations of code diffs
+# Uses OpenRouter API to generate plain-English explanations of code diffs
 
 import os
 import requests
+import warnings
 from dotenv import load_dotenv
+
+# Suppress urllib3 SSL warnings
+warnings.filterwarnings('ignore', message='urllib3 v2 only supports OpenSSL 1.1.1+')
 
 load_dotenv()
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
@@ -69,7 +73,18 @@ def summarize_diff(diff_text: str) -> str:
     return str(summary)
 
 if __name__ == "__main__":
-    sample_diff = """diff --git a/app.py b/app.py
+    import sys
+    
+    if len(sys.argv) > 1:
+        # Read diff from file argument
+        with open(sys.argv[1], 'r') as f:
+            diff_text = f.read()
+    elif not sys.stdin.isatty():
+        # Read diff from stdin (for GitHub Actions)
+        diff_text = sys.stdin.read()
+    else:
+        # Use sample diff for testing
+        diff_text = """diff --git a/app.py b/app.py
 index 83db48f..f7353ee 100644
 --- a/app.py
 +++ b/app.py
@@ -80,4 +95,10 @@ index 83db48f..f7353ee 100644
 +    log_attempt(request)
 +    ...
 """
-    print("🔍 Summary:\n", summarize_diff(sample_diff))
+    
+    if not diff_text.strip():
+        print("No changes detected in the diff.")
+        sys.exit(0)
+    
+    explanation = summarize_diff(diff_text)
+    print(explanation)
