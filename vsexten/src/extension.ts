@@ -47,60 +47,34 @@ class DiffUseProvider {
     private async getApiKey(): Promise<string> {
         console.log('🔑 Getting API key...');
         
-        // Check all possible sources for the API key
+        // Try to get from secrets first
+        let apiKey = await this.context.secrets.get('diffuse.openrouterApiKey');
+        console.log('🔒 Secrets API key:', apiKey ? 'Found' : 'Not found');
         
-        // 1. Try from secrets (most secure)
-        const secretKey = await this.context.secrets.get('diffuse.openrouterApiKey');
-        if (secretKey) {
-            console.log('🔒 API key found in secrets');
-            return secretKey;
-        }
-        
-        // 2. Try from extension settings
-        const config = vscode.workspace.getConfiguration('diffuse');
-        const configKey = config.get<string>('openrouterApiKey');
-        if (configKey) {
-            console.log('⚙️ API key found in settings');
-            return configKey;
-        }
-        
-        // 3. Try from .env file in workspace
-        try {
-            const workspaceFolders = vscode.workspace.workspaceFolders;
-            if (workspaceFolders && workspaceFolders.length > 0) {
-                const rootPath = workspaceFolders[0].uri.fsPath;
-                const { stdout } = await execAsync(`grep OPENROUTER_API_KEY "${rootPath}/.env" 2>/dev/null || echo ""`);
-                if (stdout) {
-                    const envMatch = stdout.match(/OPENROUTER_API_KEY=(.+)/);
-                    if (envMatch && envMatch[1]) {
-                        console.log('📄 API key found in .env file');
-                        return envMatch[1].trim();
-                    }
+        if (!apiKey) {
+            // Fallback to configuration
+            const config = vscode.workspace.getConfiguration('diffuse');
+            apiKey = config.get('openrouterApiKey') || '';
+            console.log('⚙️ Config API key:', apiKey ? 'Found' : 'Not found');
+            
+            if (!apiKey) {
+                console.log('💬 Prompting user for API key...');
+                const input = await vscode.window.showInputBox({
+                    prompt: 'Enter your OpenRouter API key (get one at openrouter.ai)',
+                    password: true,
+                    ignoreFocusOut: true,
+                    placeHolder: 'sk-or-v1-...'
+                });
+                
+                if (input) {
+                    console.log('✅ User provided API key, storing in secrets...');
+                    await this.context.secrets.store('diffuse.openrouterApiKey', input);
+                    apiKey = input;
+                } else {
+                    console.log('❌ User cancelled API key input');
+                    throw new Error('API key required to use DiffUse');
                 }
             }
-        } catch (error) {
-            // Silently fail if .env doesn't exist or can't be read
-        }
-        
-        // 4. Prompt user for API key if not found anywhere
-        console.log('💬 Prompting user for API key...');
-        const input = await vscode.window.showInputBox({
-            prompt: 'Enter your OpenRouter API key (get one at openrouter.ai)',
-            password: true,
-            ignoreFocusOut: true,
-            placeHolder: 'sk-or-v1-...'
-        });
-        
-        if (input) {
-            console.log('✅ User provided API key, storing in secrets...');
-            await this.context.secrets.store('diffuse.openrouterApiKey', input);
-            return input;
-        }
-        
-        // If we get here, we have no API key
-        console.log('❌ User cancelled API key input');
-        throw new Error('API key required to use DiffUse');
-    }
         }
         
         console.log('🎉 API key ready!');
