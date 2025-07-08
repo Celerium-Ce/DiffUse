@@ -1,21 +1,20 @@
 #!/usr/bin/env python3
 """
-DiffUse - AI-powered Git diff explanation tool
-Usage: 
-  diffuse                    # Explain unstaged changes
-  diffuse --staged           # Explain staged changes  
-  diffuse HEAD~1             # Explain diff from specific commit
-  diffuse --help             # Show help
+DiffUse - AI-powered Git diff analysis tool
+Explains code changes, assesses risk, and detects conflicts using AI.
 """
 
 import os
 import sys
 import subprocess
 import argparse
+import json
 
 # Get the directory where this script is located
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 EXPLAIN_SCRIPT = os.path.join(SCRIPT_DIR, "scripts", "explain_diff.py")
+RISK_SCRIPT = os.path.join(SCRIPT_DIR, "scripts", "risk_score.py")
+DETECT_SCRIPT = os.path.join(SCRIPT_DIR, "scripts", "detect_conflict.py")
 
 def get_git_diff(ref=None, staged=False):
     """Get git diff output"""
@@ -30,47 +29,154 @@ def get_git_diff(ref=None, staged=False):
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
         return result.stdout
     except subprocess.CalledProcessError as e:
-        print(f"Error getting git diff: {e}")
+        print(f"❌ Error getting git diff: {e}")
         return None
 
+def check_git_repo():
+    """Check if we're in a git repository"""
+    try:
+        subprocess.run(["git", "rev-parse", "--git-dir"], 
+                      capture_output=True, check=True)
+        return True
+    except subprocess.CalledProcessError:
+        return False
+
+def run_analysis(script_path, diff_text, feature_name):
+    """Run a specific analysis script"""
+    try:
+        result = subprocess.run([sys.executable, script_path], 
+                              input=diff_text, text=True, 
+                              capture_output=True, check=True)
+        return result.stdout.strip()
+    except subprocess.CalledProcessError as e:
+        return f"❌ Error in {feature_name}: {e.stderr if e.stderr else str(e)}"
+
+def format_output(explanation, risk_data, conflicts, mode):
+    """Format the combined output"""
+    if mode == "explain":
+        return f"📝 **Explanation:** {explanation}"
+    elif mode == "risk":
+        return f"⚠️ **Risk Assessment:** {risk_data}"
+    elif mode == "detect":
+        return f"🔍 **Conflict Detection:** {conflicts}"
+    else:  # combined mode
+        output = ["🤖 **DiffUse Analysis**", "=" * 40]
+        
+        if explanation:
+            output.extend([
+                "",
+                "📝 **What Changed:**",
+                f"   {explanation}",
+            ])
+        
+        if risk_data and "score" in risk_data.lower():
+            output.extend([
+                "",
+                "⚠️ **Risk Assessment:**",
+                f"   {risk_data}",
+            ])
+        
+        if conflicts and "no conflicts" not in conflicts.lower():
+            output.extend([
+                "",
+                "🔍 **Potential Issues:**",
+                f"   {conflicts}",
+            ])
+        
+        return "\n".join(output)
+
 def main():
-    parser = argparse.ArgumentParser(description="AI-powered Git diff explanation")
-    parser.add_argument("ref", nargs="?", help="Git reference to compare against (e.g., HEAD~1)")
-    parser.add_argument("--staged", action="store_true", help="Explain staged changes")
-    parser.add_argument("--version", action="version", version="DiffUse 1.0")
+    parser = argparse.ArgumentParser(
+        description="🤖 DiffUse - AI-powered Git diff analysis",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  diffuse                    # Full analysis of unstaged changes
+  diffuse --explain          # Just explain the changes
+  diffuse --risk             # Just show risk assessment
+  diffuse --detect           # Just detect conflicts
+  diffuse --staged           # Analyze staged changes
+  diffuse HEAD~1             # Compare with previous commit
+  diffuse main               # Compare with main branch
+        """
+    )
+    
+    # Analysis modes
+    parser.add_argument("--explain", action="store_true", help="Explain changes only")
+    parser.add_argument("--risk", action="store_true", help="Risk assessment only")
+    parser.add_argument("--detect", action="store_true", help="Conflict detection only")
+    parser.add_argument("--all", action="store_true", help="Full analysis (default)")
+    
+    # Git options
+    parser.add_argument("ref", nargs="?", help="Git reference (e.g., HEAD~1, main)")
+    parser.add_argument("--staged", action="store_true", help="Analyze staged changes")
+    
+    # Output options
+    parser.add_argument("--json", action="store_true", help="Output as JSON")
+    parser.add_argument("--quiet", "-q", action="store_true", help="Minimal output")
+    
+    parser.add_argument("--version", action="version", version="DiffUse 2.0")
     
     args = parser.parse_args()
     
     # Check if we're in a git repository
-    try:
-        subprocess.run(["git", "rev-parse", "--git-dir"], 
-                      capture_output=True, check=True)
-    except subprocess.CalledProcessError:
-        print("Error: Not in a git repository")
+    if not check_git_repo():
+        print("❌ Not in a git repository")
         sys.exit(1)
     
+    # Determine analysis mode
+    if args.explain:
+        mode = "explain"
+    elif args.risk:
+        mode = "risk"
+    elif args.detect:
+        mode = "detect"
+    else:
+        mode = "all"
+    
     # Get the diff
+    if not args.quiet:
+        print("🔍 Getting git diff...")
+    
     diff_output = get_git_diff(args.ref, args.staged)
     
     if not diff_output:
-        print("No changes to explain")
+        print("❌ No changes found")
         sys.exit(0)
         
     if not diff_output.strip():
-        print("No changes detected")
+        print("✅ No changes detected")
         sys.exit(0)
     
-    # Run the explanation script
-    try:
-        result = subprocess.run([sys.executable, EXPLAIN_SCRIPT], 
-                              input=diff_output, text=True, 
-                              capture_output=True, check=True)
-        print(result.stdout)
-    except subprocess.CalledProcessError as e:
-        print(f"Error explaining diff: {e}")
-        if e.stderr:
-            print(f"Details: {e.stderr}")
-        sys.exit(1)
+    # Run analyses based on mode
+    explanation = None
+    risk_data = None
+    conflicts = None
+    
+    if not args.quiet:
+        print("🤖 Analyzing changes...")
+    
+    if mode in ["explain", "all"]:
+        explanation = run_analysis(EXPLAIN_SCRIPT, diff_output, "explanation")
+    
+    if mode in ["risk", "all"]:
+        risk_data = run_analysis(RISK_SCRIPT, diff_output, "risk assessment")
+    
+    if mode in ["detect", "all"]:
+        conflicts = run_analysis(DETECT_SCRIPT, diff_output, "conflict detection")
+    
+    # Format and display output
+    if args.json:
+        result = {
+            "explanation": explanation,
+            "risk": risk_data,
+            "conflicts": conflicts,
+            "mode": mode
+        }
+        print(json.dumps(result, indent=2))
+    else:
+        output = format_output(explanation, risk_data, conflicts, mode)
+        print("\n" + output)
 
 if __name__ == "__main__":
     main()
