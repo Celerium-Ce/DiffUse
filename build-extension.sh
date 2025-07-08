@@ -12,6 +12,18 @@ if [ ! -d "vsexten" ]; then
     exit 1
 fi
 
+# Ensure we're in a git repository
+if [ ! -d ".git" ]; then
+    echo "❌ Error: Not in a git repository root"
+    exit 1
+fi
+
+# Make sure the vsexten directory doesn't have its own git repo
+if [ -d "vsexten/.git" ]; then
+    echo "⚠️ Warning: vsexten has its own .git directory. Removing..."
+    rm -rf vsexten/.git
+fi
+
 # Navigate to the extension directory
 cd vsexten
 
