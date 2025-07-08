@@ -6,16 +6,11 @@ import requests
 from dotenv import load_dotenv
 
 load_dotenv()
-HF_TOKEN = os.getenv("HF_API_TOKEN")
-if not HF_TOKEN:
-    raise RuntimeError("Please set HF_API_TOKEN in your .env")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+if not OPENROUTER_API_KEY:
+    raise RuntimeError("Missing OpenRouter API key in .env")
 
-# Use a model designed for code and text summarization
-API_URL = "https://api-inference.huggingface.co/models/facebook/bart-large-cnn"
-
-headers = {
-    "Authorization": f"Bearer {HF_TOKEN}"
-}
+API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 def clean_diff(diff_text: str) -> str:
     """
@@ -35,21 +30,26 @@ def clean_diff(diff_text: str) -> str:
 
 def summarize_diff(diff_text: str) -> str:
     """
-    Send the cleaned diff to Hugging Face and return a plain-English summary.
+    Send the cleaned diff to OpenRouter API and return a plain-English summary.
     """
     cleaned = clean_diff(diff_text)
+    
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "HTTP-Referer": "https://yourdomain.com",  # Replace or keep generic
+        "Content-Type": "application/json"
+    }
+    
     prompt = (
         "You are an expert code reviewer. In one clear, human sentence, explain the main purpose of this code change for a pull request summary. "
         "Focus on what functionality or behavior is being added, removed, or changed. Avoid repeating code.\n"
         f"Code diff:\n{cleaned}"
     )
+    
     payload = {
-        "inputs": prompt,
-        "parameters": {
-            "max_length": 128,
-            "num_beams": 4,
-            "early_stopping": True
-        }
+        "model": "mistralai/mixtral-8x7b-instruct",  # free & smart
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.3
     }
 
     r = requests.post(API_URL, headers=headers, json=payload)
@@ -57,12 +57,12 @@ def summarize_diff(diff_text: str) -> str:
         return f"[ERROR] {r.status_code}: {r.text}"
 
     out = r.json()
-    first = out[0] if isinstance(out, list) and out else out
-    summary = first.get("generated_text") or first.get("summary_text")
+    summary = out["choices"][0]["message"]["content"]
+    
     # Post-process: remove repeated words, collapse whitespace, capitalize first letter
     if isinstance(summary, str):
         import re
-        summary = re.sub(r'(\\b\\w+\\b)(?:\\s+\\1\\b)+', r'\\1', summary, flags=re.IGNORECASE)  # remove repeated words
+        summary = re.sub(r'(\b\w+\b)(?:\s+\1\b)+', r'\1', summary, flags=re.IGNORECASE)  # remove repeated words
         summary = re.sub(r'\s+', ' ', summary).strip()
         summary = summary[0].upper() + summary[1:] if summary else summary
         return summary
