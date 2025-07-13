@@ -234,9 +234,3 @@ Found a bug? Want a feature?
 ## 📄 License
 
 MIT License - Use it, modify it, share it!
-
----
-
-**Made with ❤️ for developers who want to understand their code changes better**
-
-🚀 Star this repo if it helps you! | 🐛 Report issues | � Suggest features
